@@ -9,6 +9,10 @@ Servo servo; // create servo object
 int angle = 0;   // servo position in degrees
 int frontAngle = 0; // defines the angle of the servo motor when the robot is looking forward
 
+#include <SoftwareSerial.h> // virtual serial for Bluetooth and GPS
+static const uint32_t BTBaud = 9600;
+SoftwareSerial BT(12, 13); // Bluetooth: TX to 12, RX to 13, Vcc to 5V, GND to GND
+
 int motor1Pin = 3; // right motor pin
 int motor2Pin = 5; // left motor pin
 int motorsSpeed = 185; // PWM value for wheels (DC motors are 3-6 VDC)
@@ -20,9 +24,16 @@ int maxObjectDistance = 50; // sensor value when robot will understand there is 
 
 // Setup loop
 void setup() {
+  
+  // Open Serial port (debugging)
   Serial.begin(9600);  // Serial port to connect to the CPU
   Serial.println("Starting Robot...");
 
+  // Open Bluetooth port
+  BT.begin(BTBaud);
+  BT.println("Connected! Send ? for help");
+
+  // Define PWM ports for DC motors
   pinMode(motor1Pin, OUTPUT); // define pin for motor 1
   pinMode(motor2Pin, OUTPUT); // define pin for motor 2
 }
@@ -36,7 +47,7 @@ void loop() {
   float leftDist;
   float rightDist;
 
-  // Check for user inputs
+  // Check for user inputs (Serial port)
   if (Serial.available() > 0) {
     int incomingByte = Serial.read();
     if (incomingByte == 48) {
@@ -47,6 +58,8 @@ void loop() {
     }
     Serial.println(incomingByte);
   }
+
+  // Check for user inputs (BT port)
 
 
   switch (state) {
@@ -163,10 +176,23 @@ void moveServoMotor(int angle) {
 }
 
 
-
-
-
-
-
-
-
+// Bluetooth data
+void readBTPort() {
+  char BTmsg = '\0';
+  
+  BT.listen();
+  while (BT.available() > 0) {
+    // if text arrived in from BT serial...
+    BTmsg = (BT.read());
+  }
+  
+  if (BTmsg == '1') {
+      mainStart = true;
+  } else if (BTmsg == '0') {
+      mainStart = false;
+      state = 0;
+  } else if (BTmsg == '?') {
+      BT.println("Send '1' to start robot");
+      BT.println("Send '0' to stop robot");
+  }
+}
