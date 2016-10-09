@@ -15,16 +15,20 @@ SoftwareSerial BT(12, 13); // Bluetooth: TX to 12, RX to 13, Vcc to 5V, GND to G
 
 int motor1Pin = 3; // right motor pin
 int motor2Pin = 5; // left motor pin
-int motorsSpeed = 185; // PWM value for wheels (DC motors are 3-6 VDC)
+int motorsSpeed = 100; // PWM value for wheels (DC motor 1 is 3-6 VDC)
+int motorsSpeed2 = 120; // PWM value for wheels (DC motor 2 is 3-6 VDC). Speed 1 and 2 are different to correct forward travel deviation
 int turnDirection = 0; // -1: left, 1: right
 
-bool mainStart = true; // main ON/OFF switch set by the user
-int minObjectDistance = 350; // sensor value when robot will understand there is an obstacle
-int maxObjectDistance = 50; // sensor value when robot will understand there is no floor
+int stopLEDPin = 6; // Red LED to flash when stopped
+int goLEDPin = 7; // Green LED to be on when running
+
+bool mainStart = false; // main ON/OFF switch set by the user
+int minObjectDistance = 250; // sensor value when robot will understand there is an obstacle
+int maxObjectDistance = 110; // sensor value when robot will understand there is no floor
 
 // Setup loop
 void setup() {
-  
+
   // Open Serial port (debugging)
   Serial.begin(9600);  // Serial port to connect to the CPU
   Serial.println("Starting Robot...");
@@ -36,6 +40,10 @@ void setup() {
   // Define PWM ports for DC motors
   pinMode(motor1Pin, OUTPUT); // define pin for motor 1
   pinMode(motor2Pin, OUTPUT); // define pin for motor 2
+
+  // Define Digital Output ports for LED indicators
+  pinMode(stopLEDPin, OUTPUT);
+  pinMode(goLEDPin, OUTPUT);
 }
 
 // Main loop
@@ -48,27 +56,21 @@ void loop() {
   float rightDist;
 
   // Check for user inputs (Serial port)
-  if (Serial.available() > 0) {
-    int incomingByte = Serial.read();
-    if (incomingByte == 48) {
-      mainStart = false;
-      state = 0;
-    } else if (incomingByte == 49) {
-      mainStart = true;
-    }
-    Serial.println(incomingByte);
-  }
+  readSerialPort();
 
   // Check for user inputs (BT port)
+  readBTPort();
 
-
+  // State Machine
   switch (state) {
     case -1: // Idle, do nothing, wait until user asks to move
       distance = ReadDistance(-1000);
       Serial.print(state); Serial.print(": "); Serial.println(distance);
-      
+
       if (mainStart == true) {
         state = 1; // go to travel mode
+        digitalWrite(stopLEDPin, LOW);
+        digitalWrite(goLEDPin, HIGH);
       }
       break;
 
@@ -79,6 +81,8 @@ void loop() {
       servo.detach(); // Start servo motor
       Serial.println(state);
       state = -1;
+      digitalWrite(stopLEDPin, HIGH);
+      digitalWrite(goLEDPin, LOW);
       delay(250);
       break;
 
@@ -90,7 +94,7 @@ void loop() {
         if (distance < minObjectDistance && distance > maxObjectDistance) {
           // no obstacle detected to the front, move forward
           analogWrite(motor1Pin, motorsSpeed);
-          analogWrite(motor2Pin, motorsSpeed);
+          analogWrite(motor2Pin, motorsSpeed2);
         } else {
           // obstacle detected
           state = 2;
@@ -117,38 +121,57 @@ void loop() {
       leftDist = 0.5 * (distArray[3] + distArray[4]);
       rightDist = 0.5 * (distArray[0] + distArray[1]);
 
-      if (leftDist <= rightDist) {
+      state = 3;
+      if (leftDist <= rightDist && leftDist > maxObjectDistance) {
         turnDirection = -1;
-      } else {
+      } else if (rightDist > maxObjectDistance) {
         turnDirection = 1;
+      } else {
+        // Nowhere to go safely, stop
+        state = 4;
       }
 
-      state = 3;
       break;
 
     case 3: // turn
-
-      if (turnDirection < 0){ // turn left
+    
+      if (turnDirection < 0) { // turn left
         analogWrite(motor1Pin, motorsSpeed);
         analogWrite(motor2Pin, 0);
       } else if (turnDirection > 0) { // turn right
         analogWrite(motor1Pin, 0);
         analogWrite(motor2Pin, motorsSpeed);
-      } 
+      }
 
       delay(500);
       analogWrite(motor1Pin, 0);
       analogWrite(motor2Pin, 0);
-      
+
       Serial.println(state);
       state = 1; // go to travel. In case there is still an obstacle, it will go back to the sweep
       break;
+
+    case 4: // could not find a safe direction
+
+      Serial.println(state);
+      int noIt;
+      int noTimes = 2;
+      for (noIt = 0; noIt < noTimes; noIt++) {
+        moveServoMotor(-45);
+        delay(250);
+        moveServoMotor(45);
+        delay(250);
+      }
+      
+      state = 0;
+      mainStart = false;
 
   } // end of state switch
 
   delay(50);
 
 } // end of main loop
+
 
 // Get value from IR distance sensor at the specific angle. Return the average of nSamples
 int ReadDistance(int angle) {
@@ -165,34 +188,46 @@ int ReadDistance(int angle) {
   }
   sVal = sVal / nSamples; // average analog reading
   return sVal;
-
 }
 
 // Move the servo motor to the desired angle
 void moveServoMotor(int angle) {
   angle = angle + 90; // this is to convert from servo to robot coordinate reference
   servo.write(angle);
-  delay(250);
+  delay(150);
 }
 
+// Read serial Port data
+void readSerialPort() {
+  if (Serial.available() > 0) {
+    int incomingByte = Serial.read();
+    if (incomingByte == 48) {
+      mainStart = false;
+      state = 0;
+    } else if (incomingByte == 49) {
+      mainStart = true;
+    }
+    Serial.println(incomingByte);
+  }
+}
 
-// Bluetooth data
+// Read Bluetooth data
 void readBTPort() {
   char BTmsg = '\0';
-  
+
   BT.listen();
   while (BT.available() > 0) {
     // if text arrived in from BT serial...
     BTmsg = (BT.read());
   }
-  
+
   if (BTmsg == '1') {
-      mainStart = true;
+    mainStart = true;
   } else if (BTmsg == '0') {
-      mainStart = false;
-      state = 0;
+    mainStart = false;
+    state = 0;
   } else if (BTmsg == '?') {
-      BT.println("Send '1' to start robot");
-      BT.println("Send '0' to stop robot");
+    BT.println("Send '1' to start robot");
+    BT.println("Send '0' to stop robot");
   }
 }
